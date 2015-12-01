@@ -10,6 +10,6 @@ v1.0	2015.08.11	Michael Scharfenberg	Initial version of carduinodroid_arduino
 ----------------------------------------------------------------------------------------
 
 
-For further information take a look at the carduinodroid-wiki:
+# For further information take a look at the carduinodroid-wiki:
 
-https://github.com/tuiSSE/carduinodroid-wiki/wiki
+# https://github.com/tuiSSE/carduinodroid-wiki/wiki
