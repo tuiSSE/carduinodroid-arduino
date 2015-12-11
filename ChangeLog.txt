@@ -1,8 +1,0 @@
-ChangeLog - carduinodroid_arduino
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-
-Vers.   Date:		Author                  Notes
-----------------------------------------------------------------------------------------
-v1.0	2015.08.11	Michael Scharfenberg	Initial version of carduinodroid_arduino
-			Daniel Werneburg
-----------------------------------------------------------------------------------------
