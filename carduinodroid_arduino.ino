@@ -45,6 +45,7 @@ SCL  | [ ]A5/SCL  [ ] [ ] [ ]      RX<0[ ] |   D0  SERIAL_READ
 #include <Wire.h>             //Support for I2C Connection
 #include <Servo.h>            //Support for Servo Motor
 #include "serialProtocol.h"   //definition of the Serial Protocol
+#include "DS2745.h"           //definition of the DS2745 battery chip
 
 const byte DEBUG                     =0;
 
@@ -70,82 +71,64 @@ const byte  FRONT                    =0;
 const byte  BACK                     =1;
 const byte  RIGHT                    =0;
 const byte  LEFT                     =1;
+const byte  TX						 =0;
+const byte  RX                       =1;
 
 //define steering servo
 const int   STEERING_SERVO_MIDDLE    =90;
 const int   STEERING_SERVO_RANGE     =40; //measured
 const int   STEERING_RESOLUTION      =8;//127; //resolution of the steering servo
-const int   STEERING_ANGLE_PER_STEP  =STEERING_SERVO_RANGE/STEERING_RESOLUTION;//angle of one servo step
+const int   STEERING_ANGLE_PER_STEP  =STEERING_SERVO_RANGE  / STEERING_RESOLUTION; //angle of one servo step
 const int   STEERING_ANGLE_MIN       =STEERING_SERVO_MIDDLE - STEERING_SERVO_RANGE;//minimum angle
 const int   STEERING_ANGLE_MAX       =STEERING_SERVO_MIDDLE + STEERING_SERVO_RANGE;//maximum angle
 
 //define motor speed
 const int   MOTOR_MAX                =255;
 const int   MOTOR_START              =75;
-const int   MOTOR_RANGE              =MOTOR_MAX-MOTOR_START;
+const int   MOTOR_RANGE              =MOTOR_MAX - MOTOR_START;
 const int   MOTOR_RESOLUTION         =9;//127;
-const float MOTOR_SPEED_PER_STEP     =MOTOR_RANGE/MOTOR_RESOLUTION;
+const float MOTOR_SPEED_PER_STEP     =MOTOR_RANGE / MOTOR_RESOLUTION;
 
 //define ultrasonic constants
-const int   ULTRASONIC_MAX_RANGE     = 300; // Maximum Range of Ultrasonic Sensors to achive in cm
-const float ULTRASONIC_SPEED         = 29.1; // Speed of Sound in microseconds/cm
-const long  ULTRASONIC_TIMEOUT       = 2*1000000*ULTRASONIC_MAX_RANGE/100/ULTRASONIC_SPEED; // max. time a sensorsignal can need to get back to the sensor in µs
+const int   ULTRASOUND_MAX_RANGE     = 300; // Maximum Range of Ultrasonic Sensors to achive in cm
+const int 	ULTRASOUND_MAX_VAL		 = 254;
+const float ULTRASOUND_SPEED         = 29.1; // Speed of Sound in microseconds/cm
+const long  ULTRASOUND_TIMEOUT       = 20000 * ULTRASOUND_MAX_RANGE / ULTRASOUND_SPEED; // max. time a sensorsignal can need to get back to the sensor in µs
 
 //define limits for speed
 const int   LIMIT_STEPS                =5; //number of limit
 const int   LIMIT_SPEED[LIMIT_STEPS]   ={1 ,2 ,4  ,6  ,8};
-const int   LIMIT_DISTANCE[LIMIT_STEPS]={10,20, 50,100,200};
+const int   LIMIT_DISTANCE[LIMIT_STEPS]={10,50,100,200,254};
 
 //Define front led dimmer
 const int   FRONT_LIGHT_DIMMER       =1023; //Dimming of Front LEDs
 
-//define battery measurement
-const byte  BATT_DEBUG_READ          =0;
-const byte  BATT_DEBUG_WRITE         =0;
-const byte  BATT_DEBUG_VAL           =0;
-const uint8_t   BATT_SLAVE_DECIVE        =72;
-const byte  BATT_SET_FIRST_REG       =0x0A;
-const byte  BATT_READ_NUM            =8;
-const byte  BATT_PWR_ON_RST          =0x40; //power on reset bit
-const byte  BATT_STATUS_REG          =0x01;
-const byte  BATT_BIAS_A_REG          =0x61;
-const byte  BATT_BIAS_B_REG          =0x62;
-const byte  BATT_ACC_CURR_A_REG      =0x11;
-const byte  BATT_ACC_CURR_B_REG      =0x10;
-const byte  BATT_CURRENT_OFFSET      =0xF0; //-16 in 2-complement
-const float BATT_RSNS                =0.0143; //Value of I_Battery Sense Resistor
-const float BATT_CAPACITY            =1.3; //Capacity of Battery - measured
-const int   BATT_ACC_CURR_START      =round(BATT_CAPACITY*BATT_RSNS/0.00000625);
 
 //define serial constants
 const int   SERIAL_EMERGENCY_TIMEOUT =400; // Timeout for emergency-stop after loss of connection btw. arduino and smartphone (in ms)
 const int   SERIAL_SEND_INTERVAL     =200;
 const int   SERIAL_BAUDRATE          =9600;
 
+//define power led blink state
+const int   POWER_LED_INTERVAL       =300;
+const int   POWER_LED_LOW            =50;
+byte        powerLedState			 =1;
+unsigned long powerLedTime           =0; // time stamp for power led
+
 //time variables
-unsigned long receiveTime            = 0; // time stamp for receiveing data
-unsigned long sendTime               = 0; // time stamp for sending data
-
-
-//ultrasonic Distances
-int distanceFront                    = -1;
-int distanceBack                     = -1;
-
-int speedLimit                       = MOTOR_MAX;
-
-//send bytes
-float Temp = -1;
-float MCurr = -1;
-float ACurr = -1;
-float Volt = -1;
+unsigned long receiveTime            =0; // time stamp for receiveing data
+unsigned long sendTime               =0; // time stamp for sending data
 
 //received bytes
-String rxBuffer = "";
-byte   rxSpeed  = SPEED_DEFAULT;
-byte   rxSteer  = STEER_DEFAULT;
-byte   rxStatus = STATUS_DEFAULT;
+byte   rxBuffer[RECEIVE_BUFFER_LENGTH];
+byte   rxBufferLength                =0;
+byte   rxSpeed                       =SPEED_DEFAULT;
+byte   rxSteer                       =STEER_DEFAULT;
+byte   rxStatus                      =STATUS_DEFAULT;
+int    speedLimit                    =MOTOR_RESOLUTION;
 
-Servo steeringServo;    //Define steeringServo as Variable
+Servo  steeringServo;    //Define steeringServo as Variable
+DS2745 battery;
 
 void setup()
 {
@@ -168,30 +151,17 @@ void setup()
   
   steeringServo.write(STEERING_SERVO_MIDDLE);
 
-  //Start I2C Connection to Battery Management
-  Wire.begin();
+  battery.init();
   
   //initialize Car
   carUpdate();
-
-  /*If BatteryManagement Chip gets out of Power, it expects a battery change
-   and therefore resets the accumulated current to BatteryCapacity */
-
-  byte chipRegister = getBatteryChipStatusRegister();
-  if((chipRegister & BATT_PWR_ON_RST) != 0){ //If PORF (Power on Reset Flag) bit is 1
-    resetAccumulatedCurrent();
-    setBatteryChipStatusRegister(chipRegister & (~(BATT_PWR_ON_RST)));
-  }
-  setCurrentOffset(0xF0); //-16 in two complements
-  
-  //turn on power led
-  setLED(LED2_GREEN_POWER,HIGH);
 }
 
 void loop() 
 {
   serialProtocolWrite();  
-  emergencyCheck();  
+  emergencyCheck();
+  checkPwr();
   if(DEBUG){
     delay(500);
   }
@@ -199,39 +169,70 @@ void loop()
 
 void serialProtocolWrite(){
   if(sendTime + SERIAL_SEND_INTERVAL < millis()){
-    getBatteryValues();
+    battery.update();
     distanceFront = measureDistance(FRONT);
     distanceBack = measureDistance(BACK);
-    byte Buffer[SEND_BUFFER_LENGTH];
+    byte txBuffer[SEND_BUFFER_LENGTH+1];
     
-    Buffer[NUM_START]          = STARTBYTE;
-    Buffer[NUM_VERSION_LENGTH] = SEND_VERSION_LENGTH;
-    Buffer[1] = MCurr* -100 ;
-    Buffer[2] = ACurr* 100;
-    Buffer[3] = ACurr/BATT_CAPACITY*100;
-    Buffer[4] = Volt*100;
-    Buffer[5] = Temp;
-    Buffer[6] = distanceFront;
-    Buffer[7] = distanceBack;
-    
-    Serial.write(Buffer, sizeof(Buffer));
+    txBuffer[NUM_START]           = STARTBYTE;
+    txBuffer[NUM_VERSION_LENGTH]  = SEND_VERSION_LENGTH;
+    txBuffer[NUM_CURRENT]         = checkSerialProtocol(battery.getCurrent());
+    txBuffer[NUM_ACC_CURRENT]     = checkSerialProtocol(battery.getAccCurrent());
+    txBuffer[NUM_REL_ACC_CURRENT] = checkSerialProtocol(battery.getRelAccCurrent());
+    txBuffer[NUM_VOLTAGE]         = checkSerialProtocol(battery.getVoltage());
+    txBuffer[NUM_TEMPERATURE]     = checkSerialProtocol(battery.getTemperature());
+    txBuffer[NUM_DISTANCE_FRONT]  = checkSerialProtocol(measureDistance(FRONT));
+    txBuffer[NUM_DISTANCE_BACK]   = checkSerialProtocol(measureDistance(BACK));
+    txBuffer[NUM_SEND_CHECK]      = serialProtocolCalcChecksum(txBuffer,NUM_SEND_CHECK,TX);
+    Serial.write(txBuffer, sizeof(txBuffer));
     sendTime = millis();
   }
 }
 
+byte checkSerialProtocol(byte in){
+	if(in == STARTBYTE){
+		return in-1;
+	}
+	return in;
+}
+
 void serialProtocolRead(){
   receiveTime = millis();// Set timestamp emergency-stop (last received command)
+  setLED(LED1_RED_CONNECTION,HIGH);
   while (Serial.available()) {
-    // get the new char:
-    char inChar = Serial.read();
-    #ifdef DEBUG
+    // get the new byte:
+    byte inChar = (byte) Serial.read();
+    if(DEBUG){
       Serial.println(inChar,HEX);
-    #endif
-    if(inChar == STARTBYTE){
-      rxBuffer = ""; 
     }
-    rxBuffer += inChar;
-    checkRxBuffer();    
+    if(inChar == STARTBYTE){
+      rxBufferLength = 0;
+    }
+	//add char to buffer
+    rxBuffer[rxBufferLength++] = inChar;
+    //check if a full data packet was received
+    
+    if(rxBuffer[NUM_START] != STARTBYTE){
+      rxBufferLength = 0;
+      continue;
+    }
+	if(rxBufferLength >= RECEIVE_BUFFER_LENGTH){
+      if(rxBuffer[NUM_VERSION_LENGTH] != RECEIVE_VERSION_LENGTH){
+        rxBufferLength = 0;
+        continue;
+      }
+      byte check = serialProtocolCalcChecksum(rxBuffer,NUM_RECEIVE_CHECK,RX);
+      if(rxBuffer[NUM_RECEIVE_CHECK] != check){
+        rxBufferLength = 0;
+        continue;
+      }
+      //update values
+      setLED(LED1_RED_CONNECTION,LOW);
+      rxSpeed  = rxBuffer[NUM_SPEED];
+      rxSteer  = rxBuffer[NUM_STEER];
+      rxStatus = rxBuffer[NUM_STATUS];
+      carUpdate();
+    }
   }
 }
 
@@ -248,69 +249,61 @@ void serialEvent(){
 
 void emergencyCheck(){
   if (millis() - receiveTime > SERIAL_EMERGENCY_TIMEOUT){  // Stop car after emergency-timeout 
-    stopCar();
+    carStop();
     setLED(LED1_RED_CONNECTION,HIGH);//Connection-Status LED on
   }else{
     setLED(LED1_RED_CONNECTION,LOW);//Connection-Status LED off
     if(getFailsafeStop()){
-        //Measure Distance to Obstacles in Front or Back
-        if(getDriveDir() == FRONT && getDriveStep() > 0 ){
-          distanceFront = measureDistance(FRONT);
-          limitSpeed(FRONT);//Limit maximum speed to protect car from hard crashes
-        }
-        else 
-        if (getDriveDir() == BACK && getDriveStep() > 0){
-          distanceBack = measureDistance(BACK);
-          limitSpeed(BACK); //Limit maximum speed to protect car from hard crashes
-        }
+	//Measure Distance to Obstacles in Front or Back
+      if(getDriveDir() == FRONT && getDriveStep() > 0 ){
+        carLimit(measureDistance(FRONT));//Limit maximum speed to protect car from hard crashes
       }
+      else 
+      if(getDriveDir() == BACK && getDriveStep() > 0){
+        carLimit(measureDistance(BACK)); //Limit maximum speed to protect car from hard crashes
+	  }
+    }
   }
 }
 
 
-void checkRxBuffer(){
-  if(rxBuffer.length() >= RECEIVE_BUFFER_LENGTH){
-    if(rxBuffer[NUM_START] != STARTBYTE){
-      rxBuffer = "";
-      return;
+void checkPwr(){
+  if(battery.getRelAccCurrent() < POWER_LED_LOW){
+    if(powerLedTime + POWER_LED_INTERVAL < millis()){
+	  powerLedState ^=1; //toggle state
+      setLED(LED2_GREEN_POWER,powerLedState);
     }
-    if(rxBuffer[NUM_VERSION_LENGTH] != RECEIVE_VERSION_LENGTH){
-      rxBuffer = "";
-      return;
-    }
-    byte check = calcCheck();
-    if(rxBuffer[NUM_RECEIVE_CHECK] != check){
-      rxBuffer = "";
-      return;
-    }
-    //update values
-    setLED(LED1_RED_CONNECTION,LOW);
-    rxSpeed  = rxBuffer[NUM_SPEED];
-    rxSteer  = rxBuffer[NUM_STEER];
-    rxStatus = rxBuffer[NUM_STATUS];
-    carUpdate();
+  }
+  else{
+    setLED(LED2_GREEN_POWER,HIGH);
   }
 }
 
-byte calcCheck(){
+byte serialProtocolCalcChecksum(byte* buffer, byte length, byte dir){
+  byte num = NUM_RECEIVE_CHECK;
+  if(dir == TX){
+	  num = NUM_SEND_CHECK;
+  }
+  if(length != num){
+	  return STARTBYTE; //error
+  }
   byte check = STARTBYTE;
   byte parity = 0;
   byte i = 0;
-  for(i = 1; i < NUM_RECEIVE_CHECK; i++){
-    check ^= rxBuffer[i];
+  for(i = 1; i < num; i++){
+    check ^= buffer[i];
   }
-  
   for(i = 0; i < PARITY_BIT; i++){
     if(((check >> i) & CHECK_MSK) == CHECK_MSK){
       parity ^= PARITY_MSK;
     }
   }
   check &= ~PARITY_MSK; //unset bit 7;
-  check |=  PARITY_MSK;//set parity bit
+  check |=  PARITY_MSK; //set parity bit
   return check;
 }
 
-int measureDistance(byte dir)
+byte measureDistance(byte dir)
 {
   //Send Signal
   byte trigger = ULTRASOUND_BACK_TRIGGER;
@@ -326,9 +319,9 @@ int measureDistance(byte dir)
   digitalWrite(trigger, LOW);
 
   //wait for receiving the signal (max. waittime = SensorTimeout)
-  long duration = pulseIn(echo, HIGH,ULTRASONIC_TIMEOUT);
-  long distance = (int) duration/2/ULTRASONIC_SPEED; // Duration until Signal / 2 / Speed of Sound im microseconds/cm
-  if (distance == 0 || distance > ULTRASONIC_MAX_RANGE){//Nothing in given max. Range
+  long duration = pulseIn(echo, HIGH,ULTRASOUND_TIMEOUT);
+  int distance = (int) duration/2/ULTRASOUND_SPEED; // Duration until Signal / 2 / Speed of Sound im microseconds/cm
+  if (distance == 0 || distance > ULTRASOUND_MAX_VAL){//Nothing in given max. Range
     distance = -1;
   }
   if(DEBUG){
@@ -337,7 +330,7 @@ int measureDistance(byte dir)
     else      Serial.print("Back :");
     Serial.println(distance);
   }
-  return distance;
+  return (byte) distance;
 }
 
 
@@ -371,7 +364,7 @@ void carDrive(){
   //check step resolution
   if((step > MOTOR_RESOLUTION) || (step < 1))
   {
-    stopCar();
+    carStop();
     return;
   }
   //set speed value
@@ -393,7 +386,7 @@ void carDrive(){
   }
 }
 
-void stopCar()
+void carStop()
 {
   digitalWrite(MOTOR_14,LOW);
   digitalWrite(MOTOR_23,LOW);// stopped
@@ -418,11 +411,7 @@ void setLED(byte LEDpin, byte value){
   }
 }
 
-void limitSpeed(byte dir){
-  int distance = distanceBack;
-  if(dir == FRONT){
-    distance = distanceFront;
-  }
+void carLimit(byte distance){
   //set to maximal speed
   speedLimit = MOTOR_MAX;
   int i = 0;
@@ -470,141 +459,4 @@ void carUpdate(){
   setFrontLight(getFrontLight(),FRONT_LIGHT_DIMMER);
   carSteer();
   carDrive();
-}
-
-//////////////////////////////////////////////////////////////////////////////////////////////////
-//////////////////////////////////////////////////////////////////////////////////////BATTERY/////
-//////////////////////////////////////////////////////////////////////////////////////////////////
-
-void getBatteryValues(){
-  //Start Communication
-  Wire.beginTransmission(BATT_SLAVE_DECIVE); // begin transmission with slave device #72 (BATT_SLAVE_DECIVE)
-  Wire.write(BATT_SET_FIRST_REG);            // Set Register to first readable Register
-
-  //Send Request and look for error code
-  int error = Wire.endTransmission();
-
-  // Receive 8 (BATT_SLAVE_DECIVE) Byte from device #72 (BATT_SLAVE_DECIVE)
-  Wire.requestFrom(BATT_SLAVE_DECIVE, BATT_READ_NUM);      
-  int TempA = Wire.read();       //Get first Temperature Register
-  int TempB = Wire.read();       //Get second Temperature Register
-  int VoltA = Wire.read();       //Get first Voltage Register
-  int VoltB = Wire.read();       //Get second Voltage Register
-  int MCurrA = Wire.read();     //Get first momentary Current Register
-  int MCurrB = Wire.read();     //Get second momentary Current Register
-  int ACurrA = Wire.read();     //Get first accumulated Current Register
-  int ACurrB = Wire.read();     //Get second accumulated Current Register
-  
-  if(BATT_DEBUG_READ){
-      Serial.print("TempA: ");
-      Serial.println(TempA,3);
-      Serial.print("TempB: ");
-      Serial.println(TempB,3);
-      Serial.print("VoltA: ");
-      Serial.println(VoltA,4);
-      Serial.print("VoltB: ");
-      Serial.println(VoltB,4);
-      Serial.print("MCurrA: ");
-      Serial.println(MCurrA,5);
-      Serial.print("MCurrB: ");
-      Serial.println(MCurrB,5);
-      Serial.print("ACurrA: ");
-      Serial.println(ACurrA,5);
-      Serial.print("ACurrB: ");
-      Serial.println(ACurrB,5);
-  }
-  //Switch Register Values to match documentation
-  TempA = TempA<<3;
-  TempB = TempB>>5;
-  VoltA = VoltA & 0x007F<<3;
-  VoltB = VoltB>>5;
-  MCurrA = MCurrA <<8;
-  ACurrA = ACurrA <<8;
-
-  //Calculate absolute Values from register values
-  Temp = (TempA+TempB) * 0.125;
-  Volt = (VoltA+VoltB) * 0.00488*2.257; // Measured Counter * Multiplier* VoltageDivider
-  MCurr = (MCurrA + MCurrB) * 0.0000015625/BATT_RSNS;
-  ACurr = (ACurrA + ACurrB) * 0.00000625/BATT_RSNS;
-
-  if(BATT_DEBUG_VAL){
-    if(error>0){
-      Serial.print("Error I2C: ");
-      Serial.println(error);
-    }
-    else{
-      Serial.print("Temp: ");
-      Serial.println(Temp,3);
-      Serial.print("Volt: ");
-      Serial.println(Volt,4);
-      Serial.print("MCurr: ");
-      Serial.println(MCurr,5);
-      Serial.print("ACurr: ");
-      Serial.println(ACurr,5);
-      Serial.print("Available Capacity = ");
-      Serial.println(ACurr/BATT_CAPACITY*100,0); // Available Capacity in Percent
-    }
-  }
-}
-
-byte getBatteryChipStatusRegister(){
-  return getRegister(BATT_STATUS_REG);;
-}
-
-void setBatteryChipStatusRegister(int sendbyte){
-  setRegister(BATT_STATUS_REG,sendbyte);
-}
-
-void getBatteryChipBiasRegister(){
-  //?!?!?
-  getRegister(BATT_BIAS_A_REG);
-  getRegister(BATT_BIAS_B_REG);
-}
-
-void setCurrentOffset(int offset){
-  setRegister(BATT_BIAS_A_REG,offset);
-}
-
-void setRegister(int registerbyte, int sendbyte){
-  Wire.beginTransmission(BATT_SLAVE_DECIVE);    // begin transmission with slave device #72
-  Wire.write(registerbyte); //Set register pointer to registerbyte
-  Wire.write(sendbyte); // Write value of sendbyte to register
-  int error = Wire.endTransmission(); // end trandmission
-  if(BATT_DEBUG_WRITE){
-    Serial.print("Write To Register ");
-    Serial.print(registerbyte,HEX);
-    Serial.print(" Value: ");
-    Serial.println(sendbyte,HEX);
-    if (error){
-      Serial.print("I2C Error: ");
-      Serial.println(error);
-    }
-  }
-}
-
-byte getRegister(byte registerByte){
-  Wire.beginTransmission(BATT_SLAVE_DECIVE);    // begin transmission with slave device #72
-  Wire.write(registerByte);  // set register pointer to registerbyte
-  int error = Wire.endTransmission();
-  Wire.requestFrom((int)BATT_SLAVE_DECIVE, 1) ; // ask for 1 byte from device #72
-  byte returnByte = Wire.read(); // read given byte
-  if(BATT_DEBUG_READ){
-    Serial.print("Read from Register: ");
-    Serial.print(registerByte,HEX);
-    Serial.print(" Value: ");
-    Serial.println(returnByte,HEX);
-    if (error){
-      Serial.print("I2C Error: ");
-      Serial.println(error);
-    }
-  }
-  return returnByte;
-}
-
-void resetAccumulatedCurrent(){
-  int ACurrStartRegister = BATT_ACC_CURR_START;
-  byte ACurrStartRegisterA = lowByte(ACurrStartRegister);
-  byte ACurrStartRegisterB = highByte(ACurrStartRegister);
-  setRegister(BATT_ACC_CURR_B_REG,ACurrStartRegisterB); //Value of battery Ah in HEX (1.3Ah)
-  setRegister(BATT_ACC_CURR_A_REG,ACurrStartRegisterA); //Value of battery Ah in HEX (1.3Ah)
 }

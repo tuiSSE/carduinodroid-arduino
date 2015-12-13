@@ -23,7 +23,15 @@
 #define NUM_STEER              3
 #define NUM_STATUS             4
 #define NUM_RECEIVE_CHECK      5
-#define NUM_SEND_CHECK         5
+
+#define NUM_CURRENT            2
+#define NUM_ACC_CURRENT        3
+#define NUM_REL_ACC_CURRENT    4
+#define NUM_VOLTAGE            5
+#define NUM_TEMPERATURE        6
+#define NUM_DISTANCE_FRONT     7
+#define NUM_DISTANCE_BACK      8
+#define NUM_SEND_CHECK         9
 
 #define PARITY_BIT             7
 #define PARITY_MSK             (1 << PARITY_BIT)
