@@ -4,13 +4,6 @@
  *  version 2.0
  *  url     https://github.com/tuiSSE/carduinodroid-wiki/wiki/
  *
- *  Vesion History
- *  Version   Date         Feature/Fix
- *
- *  0.8       28.10.2013   New Protocol by Harald Funk
- *  0.9       03.05.2014   Emergency-Shutdown added
- *  1.0       29.05.2015   Auto-Stop + some fixes
- *  2.0       11.12.2015   Serial Protocol V2 by Till Max Schwikal
  */
  
 
@@ -47,31 +40,31 @@ SCL  | [ ]A5/SCL  [ ] [ ] [ ]      RX<0[ ] |   D0  SERIAL_READ
 #include "serialProtocol.h"   //definition of the Serial Protocol
 #include "DS2745.h"           //definition of the DS2745 battery chip
 
-const byte DEBUG                     =0;
+const byte DEBUG                     =0;//connunication between android application and arduino can not work in debug mode
 
 //define Light/LED Pins
-const byte  LED1_RED_CONNECTION      =10;
-const byte  LED2_GREEN_POWER         =12;
-const byte  LED3_YELLOW_STATUS       =13;
-const byte  FRONT_LIGHT              =11;
+const int   LED1_RED_CONNECTION      =10;
+const int   LED2_GREEN_POWER         =12;
+const int   LED3_YELLOW_STATUS       =13;
+const int   FRONT_LIGHT              =11;
 //define Motor Pins
-const byte  MOTOR_ENABLE             =3;
-const byte  MOTOR_14                 =9;
-const byte  MOTOR_23                 =2;
+const int   MOTOR_ENABLE             =3;
+const int   MOTOR_14                 =9;
+const int   MOTOR_23                 =2;
 //define Steering Servo Pins
-const byte  STEERING_SERVO           =5;
+const int   STEERING_SERVO           =5;
 //define Ultrasound Pins
-const byte  ULTRASOUND_FRONT_TRIGGER =4;
-const byte  ULTRASOUND_FRONT_ECHO    =7;
-const byte  ULTRASOUND_BACK_TRIGGER  =6;
-const byte  ULTRASOUND_BACK_ECHO     =8;
+const int   ULTRASOUND_FRONT_TRIGGER =4;
+const int   ULTRASOUND_FRONT_ECHO    =7;
+const int   ULTRASOUND_BACK_TRIGGER  =6;
+const int   ULTRASOUND_BACK_ECHO     =8;
 
 //define directions
 const byte  FRONT                    =0;
 const byte  BACK                     =1;
 const byte  RIGHT                    =0;
 const byte  LEFT                     =1;
-const byte  TX						 =0;
+const byte  TX                       =0;
 const byte  RX                       =1;
 
 //define steering servo
@@ -91,9 +84,10 @@ const float MOTOR_SPEED_PER_STEP     =MOTOR_RANGE / MOTOR_RESOLUTION;
 
 //define ultrasonic constants
 const int   ULTRASOUND_MAX_RANGE     = 300; // Maximum Range of Ultrasonic Sensors to achive in cm
-const int 	ULTRASOUND_MAX_VAL		 = 254;
+const int   ULTRASOUND_MAX_VAL       = 254;
 const float ULTRASOUND_SPEED         = 29.1; // Speed of Sound in microseconds/cm
-const long  ULTRASOUND_TIMEOUT       = 20000 * ULTRASOUND_MAX_RANGE / ULTRASOUND_SPEED; // max. time a sensorsignal can need to get back to the sensor in µs
+const int   ULTRASOUND_SOUND_SPEED   = 343;  // Speed of Sound
+const long  ULTRASOUND_TIMEOUT       = 2*1000000*ULTRASOUND_MAX_RANGE/100/ULTRASOUND_SOUND_SPEED; // max. time a sensorsignal can need to get back to the sensor in µs
 
 //define limits for speed
 const int   LIMIT_STEPS                =5; //number of limit
@@ -111,16 +105,18 @@ const int   SERIAL_BAUDRATE          =9600;
 
 //define power led blink state
 const int   POWER_LED_INTERVAL       =300;
-const int   POWER_LED_LOW            =50;
-byte        powerLedState			 =1;
+const int   POWER_LED_LOW            =80;
+byte        powerLedState            =1;
 unsigned long powerLedTime           =0; // time stamp for power led
 
 //time variables
 unsigned long receiveTime            =0; // time stamp for receiveing data
 unsigned long sendTime               =0; // time stamp for sending data
 
-//received bytes
-byte   rxBuffer[RECEIVE_BUFFER_LENGTH];
+//serial protocol bytes
+byte   txBuffer[SEND_BUFFER_LENGTH+1];
+byte   rxBuffer[RECEIVE_BUFFER_LENGTH+1];
+
 byte   rxBufferLength                =0;
 byte   rxSpeed                       =SPEED_DEFAULT;
 byte   rxSteer                       =STEER_DEFAULT;
@@ -128,7 +124,7 @@ byte   rxStatus                      =STATUS_DEFAULT;
 int    speedLimit                    =MOTOR_RESOLUTION;
 
 Servo  steeringServo;    //Define steeringServo as Variable
-DS2745 battery;
+DS2745* battery;
 
 void setup()
 {
@@ -137,21 +133,21 @@ void setup()
   pinMode(MOTOR_23,OUTPUT);
   pinMode(MOTOR_ENABLE,OUTPUT);
   pinMode(ULTRASOUND_FRONT_TRIGGER,OUTPUT);
-  pinMode(ULTRASOUND_FRONT_ECHO,OUTPUT);
-  pinMode(ULTRASOUND_BACK_TRIGGER,INPUT);
+  pinMode(ULTRASOUND_FRONT_ECHO,INPUT);
+  pinMode(ULTRASOUND_BACK_TRIGGER,OUTPUT);
   pinMode(ULTRASOUND_BACK_ECHO,INPUT);
   pinMode(LED1_RED_CONNECTION,OUTPUT);
   pinMode(LED2_GREEN_POWER,OUTPUT);
   pinMode(LED3_YELLOW_STATUS,OUTPUT);
   pinMode(FRONT_LIGHT,OUTPUT);
 
-  rxBuffer.reserve(RECEIVE_BUFFER_LENGTH+1);
   Serial.begin(SERIAL_BAUDRATE);
   steeringServo.attach(STEERING_SERVO);
   
   steeringServo.write(STEERING_SERVO_MIDDLE);
+  battery = new DS2745();
 
-  battery.init();
+  battery->init();
   
   //initialize Car
   carUpdate();
@@ -162,44 +158,37 @@ void loop()
   serialProtocolWrite();  
   emergencyCheck();
   checkPwr();
-  if(DEBUG){
-    delay(500);
-  }
 }//loop()
 
 void serialProtocolWrite(){
   if(sendTime + SERIAL_SEND_INTERVAL < millis()){
-    battery.update();
-    distanceFront = measureDistance(FRONT);
-    distanceBack = measureDistance(BACK);
-    byte txBuffer[SEND_BUFFER_LENGTH+1];
-    
+    battery->update();
     txBuffer[NUM_START]           = STARTBYTE;
     txBuffer[NUM_VERSION_LENGTH]  = SEND_VERSION_LENGTH;
-    txBuffer[NUM_CURRENT]         = checkSerialProtocol(battery.getCurrent());
-    txBuffer[NUM_ACC_CURRENT]     = checkSerialProtocol(battery.getAccCurrent());
-    txBuffer[NUM_REL_ACC_CURRENT] = checkSerialProtocol(battery.getRelAccCurrent());
-    txBuffer[NUM_VOLTAGE]         = checkSerialProtocol(battery.getVoltage());
-    txBuffer[NUM_TEMPERATURE]     = checkSerialProtocol(battery.getTemperature());
+    txBuffer[NUM_CURRENT]         = checkSerialProtocol(battery->getCurrent());
+    txBuffer[NUM_ACC_CURRENT]     = checkSerialProtocol(battery->getAccCurrent());
+    txBuffer[NUM_REL_ACC_CURRENT] = checkSerialProtocol(battery->getRelAccCurrent());
+    txBuffer[NUM_VOLTAGE]         = checkSerialProtocol(battery->getVoltage());
+    txBuffer[NUM_TEMPERATURE]     = checkSerialProtocol(battery->getTemperature());
     txBuffer[NUM_DISTANCE_FRONT]  = checkSerialProtocol(measureDistance(FRONT));
     txBuffer[NUM_DISTANCE_BACK]   = checkSerialProtocol(measureDistance(BACK));
     txBuffer[NUM_SEND_CHECK]      = serialProtocolCalcChecksum(txBuffer,NUM_SEND_CHECK,TX);
-    Serial.write(txBuffer, sizeof(txBuffer));
+    
+    Serial.write(txBuffer, SEND_BUFFER_LENGTH);
     sendTime = millis();
   }
 }
 
 byte checkSerialProtocol(byte in){
 	if(in == STARTBYTE){
-		return in-1;
+		return in - 1;
 	}
 	return in;
 }
 
 void serialProtocolRead(){
-  receiveTime = millis();// Set timestamp emergency-stop (last received command)
   setLED(LED1_RED_CONNECTION,HIGH);
-  while (Serial.available()) {
+  while(Serial.available()) {
     // get the new byte:
     byte inChar = (byte) Serial.read();
     if(DEBUG){
@@ -224,9 +213,13 @@ void serialProtocolRead(){
       byte check = serialProtocolCalcChecksum(rxBuffer,NUM_RECEIVE_CHECK,RX);
       if(rxBuffer[NUM_RECEIVE_CHECK] != check){
         rxBufferLength = 0;
+        Serial.print(check,HEX);
+        Serial.print("!=");
+        Serial.print(rxBuffer[NUM_RECEIVE_CHECK],HEX);
         continue;
       }
       //update values
+      receiveTime = millis();// Set timestamp emergency-stop (last received command)
       setLED(LED1_RED_CONNECTION,LOW);
       rxSpeed  = rxBuffer[NUM_SPEED];
       rxSteer  = rxBuffer[NUM_STEER];
@@ -248,11 +241,10 @@ void serialEvent(){
 }
 
 void emergencyCheck(){
-  if (millis() - receiveTime > SERIAL_EMERGENCY_TIMEOUT){  // Stop car after emergency-timeout 
+  if (receiveTime + SERIAL_EMERGENCY_TIMEOUT < millis()){  // Stop car after emergency-timeout 
     carStop();
     setLED(LED1_RED_CONNECTION,HIGH);//Connection-Status LED on
   }else{
-    setLED(LED1_RED_CONNECTION,LOW);//Connection-Status LED off
     if(getFailsafeStop()){
 	//Measure Distance to Obstacles in Front or Back
       if(getDriveDir() == FRONT && getDriveStep() > 0 ){
@@ -261,16 +253,17 @@ void emergencyCheck(){
       else 
       if(getDriveDir() == BACK && getDriveStep() > 0){
         carLimit(measureDistance(BACK)); //Limit maximum speed to protect car from hard crashes
-	  }
+      }
+      carDrive();//set new limited driveSpeed
     }
   }
 }
 
 
 void checkPwr(){
-  if(battery.getRelAccCurrent() < POWER_LED_LOW){
+  if(battery->getRelAccCurrent() < POWER_LED_LOW){
     if(powerLedTime + POWER_LED_INTERVAL < millis()){
-	  powerLedState ^=1; //toggle state
+      powerLedState ^=1; //toggle state
       setLED(LED2_GREEN_POWER,powerLedState);
     }
   }
@@ -281,53 +274,56 @@ void checkPwr(){
 
 byte serialProtocolCalcChecksum(byte* buffer, byte length, byte dir){
   byte num = NUM_RECEIVE_CHECK;
+  
   if(dir == TX){
-	  num = NUM_SEND_CHECK;
+    num = NUM_SEND_CHECK;
   }
   if(length != num){
-	  return STARTBYTE; //error
+    return STARTBYTE; //error
   }
   byte check = STARTBYTE;
   byte parity = 0;
-  byte i = 0;
-  for(i = 1; i < num; i++){
+  for(int i = 1; i < num; i++){
     check ^= buffer[i];
   }
-  for(i = 0; i < PARITY_BIT; i++){
+  
+  for(int i = 0; i < PARITY_BIT; i++){
     if(((check >> i) & CHECK_MSK) == CHECK_MSK){
-      parity ^= PARITY_MSK;
+      parity ^= PARITY_MSK;//toggle
     }
   }
   check &= ~PARITY_MSK; //unset bit 7;
-  check |=  PARITY_MSK; //set parity bit
+  check |=  parity; //set parity bit
   return check;
 }
 
 byte measureDistance(byte dir)
 {
-  //Send Signal
-  byte trigger = ULTRASOUND_BACK_TRIGGER;
-  byte echo    = ULTRASOUND_BACK_ECHO;
+  int triggerPin = ULTRASOUND_BACK_TRIGGER;
+  int echoPin    = ULTRASOUND_BACK_ECHO;
   if(dir == FRONT){
-    trigger = ULTRASOUND_FRONT_TRIGGER;
-    echo    = ULTRASOUND_FRONT_ECHO;
+    triggerPin = ULTRASOUND_FRONT_TRIGGER;
+    echoPin    = ULTRASOUND_FRONT_ECHO;
   }
-  digitalWrite(trigger, LOW);
+  //Send Signal
+  digitalWrite(triggerPin, LOW);
   delayMicroseconds(2);
-  digitalWrite(trigger, HIGH);
+  digitalWrite(triggerPin, HIGH);
   delayMicroseconds(10);
-  digitalWrite(trigger, LOW);
-
-  //wait for receiving the signal (max. waittime = SensorTimeout)
-  long duration = pulseIn(echo, HIGH,ULTRASOUND_TIMEOUT);
-  int distance = (int) duration/2/ULTRASOUND_SPEED; // Duration until Signal / 2 / Speed of Sound im microseconds/cm
-  if (distance == 0 || distance > ULTRASOUND_MAX_VAL){//Nothing in given max. Range
+  digitalWrite(triggerPin, LOW);
+  
+  //wait for receiving the signal (max. waittime = ULTRASOUND_TIMEOUT)
+  long duration = pulseIn(echoPin, HIGH, ULTRASOUND_TIMEOUT);
+  long distance = duration/2/ULTRASOUND_SPEED; // Duration until Signal / 2 / Speed of Sound im microseconds/cm
+  if (distance == 0 || distance > ULTRASOUND_MAX_RANGE){//Nothing in given max. Range
     distance = -1;
   }
   if(DEBUG){
     Serial.print("Distance");
-    if(FRONT) Serial.print("Front:");
-    else      Serial.print("Back :");
+    if(dir == FRONT) 
+      Serial.print("Front:");
+    else
+      Serial.print("Back :");
     Serial.println(distance);
   }
   return (byte) distance;
@@ -413,16 +409,14 @@ void setLED(byte LEDpin, byte value){
 
 void carLimit(byte distance){
   //set to maximal speed
-  speedLimit = MOTOR_MAX;
-  int i = 0;
-  while(i < LIMIT_STEPS){
+  speedLimit = MOTOR_RESOLUTION;
+  for(int i = 0;i < LIMIT_STEPS;i++){
     if (distance < LIMIT_DISTANCE[i]){
       //decrease distance
       speedLimit = LIMIT_SPEED[i];
       break;
     }
   }
-  carDrive();
 }
 
 boolean getStatusLed(){

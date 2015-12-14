@@ -16,7 +16,7 @@ DS2745::DS2745(){
 	voltage = -1;
 }
 
-~DS2745::DS2745(){
+DS2745::~DS2745(){
 }
 
 byte DS2745::getTemperature(){
@@ -60,14 +60,14 @@ void DS2745::update(){
 
   // Receive 8 (DS2745_SLAVE_DECIVE) Byte from device #72 (DS2745_SLAVE_DECIVE)
   Wire.requestFrom(DS2745_SLAVE_DECIVE, DS2745_READ_NUM);      
-  int temperatureA = Wire.read();       //Get first temperature Register
-  int temperatureB = Wire.read();       //Get second temperature Register
-  int voltageA = Wire.read();       //Get first voltage Register
-  int voltageB = Wire.read();       //Get second voltage Register
-  int currentA = Wire.read();     //Get first momentary Current Register
-  int currentB = Wire.read();     //Get second momentary Current Register
-  int accumulatedCurrentA = Wire.read();     //Get first accumulated Current Register
-  int accumulatedCurrentB = Wire.read();     //Get second accumulated Current Register
+  int temperatureA = Wire.read();        //Get first temperature Register
+  int temperatureB = Wire.read();        //Get second temperature Register
+  int voltageA = Wire.read();            //Get first voltage Register
+  int voltageB = Wire.read();            //Get second voltage Register
+  int currentA = Wire.read();            //Get first momentary Current Register
+  int currentB = Wire.read();            //Get second momentary Current Register
+  int accumulatedCurrentA = Wire.read(); //Get first accumulated Current Register
+  int accumulatedCurrentB = Wire.read(); //Get second accumulated Current Register
   
   if(DS2745_DEBUG_READ){
       Serial.print("temperatureA: ");
@@ -132,7 +132,7 @@ void DS2745::resetAccumulatedCurrent(){
 }
 
 byte DS2745::getStatusRegister(){
-  return getRegister(DS2745_STATUS_REG);;
+  return getRegister(DS2745_STATUS_REG);
 }
 
 void DS2745::setStatusRegister(int sendbyte){
@@ -160,11 +160,11 @@ void DS2745::setRegister(int registerbyte, int sendbyte){
   }
 }
 
-byte DS2745::getRegister(byte registerByte){
+byte DS2745::getRegister(int registerByte){
   Wire.beginTransmission(DS2745_SLAVE_DECIVE);    // begin transmission with slave device #72
   Wire.write(registerByte);  // set register pointer to registerbyte
   int error = Wire.endTransmission();
-  Wire.requestFrom((int)DS2745_SLAVE_DECIVE, 1) ; // ask for 1 byte from device #72
+  Wire.requestFrom((int)DS2745_SLAVE_DECIVE, 1); // ask for 1 byte from device #72
   byte returnByte = Wire.read(); // read given byte
   if(DS2745_DEBUG_READ){
     Serial.print("Read from Register: ");

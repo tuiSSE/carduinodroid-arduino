@@ -6,31 +6,37 @@
  * url      : https://github.com/tuiSSE/carduinodroid-wiki/wiki/
  */
 
-#ifndef DS2745.h
-#define DS2745.h
+#ifndef DS2745__h
+#define DS2745__h
+
+#if defined(ARDUINO) && ARDUINO >= 100
+  #include "Arduino.h"
+#else
+  #include "WProgram.h"
+#endif
 
 #include <Wire.h>
 
-class DS2745{
+class  DS2745{
 	public:
 		DS2745();
 		~DS2745();
 		
-		byte getTemperature();
-		byte getCurrent();
-		byte getAccCurrent();
-		byte getRelAccCurrent();
-		byte getVoltage();
+		byte  getTemperature();
+		byte  getCurrent();
+		byte  getAccCurrent();
+		byte  getRelAccCurrent();
+		byte  getVoltage();
 	
-		void resetAccumulatedCurrent();
-		void init();
-		void update();
+		void  resetAccumulatedCurrent();
+		void  init();
+		void  update();
 	private:
-		byte getStatusRegister();
-		void setStatusRegister(int sendbyte);
-		void setCurrentOffset(int offset);
-		byte getRegister(byte registerByte);
-		void setRegister(int registerbyte, int sendbyte);
+		byte  getStatusRegister();
+		void  setStatusRegister(int sendbyte);
+		void  setCurrentOffset(int offset);
+		byte  getRegister(int registerByte);
+		void  setRegister(int registerbyte, int sendbyte);
 		float temperature;
 		float current;
 		float accumulatedCurrent;
@@ -50,7 +56,7 @@ class DS2745{
 		const byte  DS2745_BIAS_A_REG          =0x61;
 		const byte  DS2745_BIAS_B_REG          =0x62;
 		const byte  DS2745_ACC_CURR_MSB_REG    =0x11;
-		const byte  DS2745_ACC_CURR_LSB_REG      =0x10;
+		const byte  DS2745_ACC_CURR_LSB_REG    =0x10;
 		
 		//values
 		const byte  DS2745_CURRENT_OFFSET      =0xF0; //-16 in 2-complement
@@ -63,6 +69,6 @@ class DS2745{
 		const float DS2745_CAPACITY_MUL        =0.00000625;
 		const int   DS2745_ACC_CURR_START      =round(DS2745_CAPACITY*DS2745_RSNS/DS2745_CAPACITY_MUL);
 	
-}
+};
 
 #endif
