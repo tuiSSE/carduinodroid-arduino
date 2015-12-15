@@ -34,13 +34,16 @@ SCL  | [ ]A5/SCL  [ ] [ ] [ ]      RX<0[ ] |   D0  SERIAL_READ
      |  UNO_R3    GND MOSI 5V  ____________/
       \_______________________/
  */
+ 
+//connunication between android application and arduino will be miserable in debug mode
+//#define DEBUG               
 
-#include <Wire.h>             //Support for I2C Connection
 #include <Servo.h>            //Support for Servo Motor
+#include <Wire.h>             //Support for I2C Connection
 #include "serialProtocol.h"   //definition of the Serial Protocol
 #include "DS2745.h"           //definition of the DS2745 battery chip
-
-const byte DEBUG                     =0;//connunication between android application and arduino can not work in debug mode
+#include "car.h"              //definition of the car actors
+#include "debug.h"            //definition of debug prints
 
 //define Light/LED Pins
 const int   LED1_RED_CONNECTION      =10;
@@ -60,44 +63,15 @@ const int   ULTRASOUND_BACK_TRIGGER  =6;
 const int   ULTRASOUND_BACK_ECHO     =8;
 
 //define directions
-const byte  FRONT                    =0;
-const byte  BACK                     =1;
-const byte  RIGHT                    =0;
-const byte  LEFT                     =1;
 const byte  TX                       =0;
 const byte  RX                       =1;
 
-//define steering servo
-const int   STEERING_SERVO_MIDDLE    =90;
-const int   STEERING_SERVO_RANGE     =40; //measured
-const char  STEERING_RESOLUTION      =127;//8; //resolution of the steering servo
-const float STEERING_ANGLE_PER_STEP  =1.0*STEERING_SERVO_RANGE  / STEERING_RESOLUTION; //angle of one servo step
-const int   STEERING_ANGLE_MIN       =STEERING_SERVO_MIDDLE - STEERING_SERVO_RANGE;//minimum angle
-const int   STEERING_ANGLE_MAX       =STEERING_SERVO_MIDDLE + STEERING_SERVO_RANGE;//maximum angle
-
-//define motor speed
-const int   MOTOR_MAX                =255;
-const int   MOTOR_START              =75;
-const int   MOTOR_RANGE              =MOTOR_MAX - MOTOR_START;
-const char  MOTOR_RESOLUTION         =127;//9; //resolution of the main motor
-const float MOTOR_SPEED_PER_STEP     =1.0 * MOTOR_RANGE / MOTOR_RESOLUTION;
-
 //define ultrasonic constants
 const int   ULTRASOUND_MAX_RANGE     = 300; // Maximum Range of Ultrasonic Sensors to achive in cm
-const int   ULTRASOUND_MAX_VAL       = 254;
+const int   ULTRASOUND_MAX_VAL       = 255;
 const float ULTRASOUND_SPEED         = 29.1; // Speed of Sound in microseconds/cm
 const int   ULTRASOUND_SOUND_SPEED   = 343;  // Speed of Sound
 const long  ULTRASOUND_TIMEOUT       = 2*1000000*ULTRASOUND_MAX_RANGE/100/ULTRASOUND_SOUND_SPEED; // max. time a sensorsignal can need to get back to the sensor in µs
-
-//define limits for speed
-const int   LIMIT_STEPS                =5; //number of limit
-const char  LIMIT_SPEED[LIMIT_STEPS]   ={6 ,12 ,30  ,50  ,100};
-//const int   LIMIT_SPEED[LIMIT_STEPS]   ={1 ,2 ,4  ,6  ,8};
-const int   LIMIT_DISTANCE[LIMIT_STEPS]={10,50,100,1500,200};
-
-//Define front led dimmer
-const int   FRONT_LIGHT_DIMMER       =1023; //Dimming of Front LEDs
-
 
 //define serial constants
 const int   SERIAL_EMERGENCY_TIMEOUT =400; // Timeout for emergency-stop after loss of connection btw. arduino and smartphone (in ms)
@@ -117,41 +91,29 @@ unsigned long sendTime               =0; // time stamp for sending data
 //serial protocol bytes
 byte   txBuffer[SEND_BUFFER_LENGTH+1];
 byte   rxBuffer[RECEIVE_BUFFER_LENGTH+1];
-
 byte   rxBufferLength                =0;
-byte   rxSpeed                       =SPEED_DEFAULT;
-byte   rxSteer                       =STEER_DEFAULT;
-byte   rxStatus                      =STATUS_DEFAULT;
-char   speedLimit                    =MOTOR_RESOLUTION;
 
-Servo  steeringServo;    //Define steeringServo as Variable
 DS2745* battery;
+Car*    car;
 
 void setup()
 {
   //set Pinmode
-  pinMode(MOTOR_14,OUTPUT);
-  pinMode(MOTOR_23,OUTPUT);
-  pinMode(MOTOR_ENABLE,OUTPUT);
   pinMode(ULTRASOUND_FRONT_TRIGGER,OUTPUT);
   pinMode(ULTRASOUND_FRONT_ECHO,INPUT);
   pinMode(ULTRASOUND_BACK_TRIGGER,OUTPUT);
   pinMode(ULTRASOUND_BACK_ECHO,INPUT);
+  
   pinMode(LED1_RED_CONNECTION,OUTPUT);
   pinMode(LED2_GREEN_POWER,OUTPUT);
   pinMode(LED3_YELLOW_STATUS,OUTPUT);
-  pinMode(FRONT_LIGHT,OUTPUT);
-
-  Serial.begin(SERIAL_BAUDRATE);
-  steeringServo.attach(STEERING_SERVO);
   
-  steeringServo.write(STEERING_SERVO_MIDDLE);
+  Serial.begin(SERIAL_BAUDRATE);
   
   battery = new DS2745();
   battery->init();
   
-  //initialize Car
-  carUpdate();
+  car = new Car(MOTOR_ENABLE,MOTOR_14,MOTOR_23,STEERING_SERVO,FRONT_LIGHT);
 }
 
 void loop() 
@@ -180,11 +142,22 @@ void serialProtocolWrite(){
   }
 }
 
+void emergencyCheck(){
+  if (receiveTime + SERIAL_EMERGENCY_TIMEOUT < millis()){  // Stop car after emergency-timeout 
+    car->stop();
+    setLED(LED1_RED_CONNECTION,HIGH);//Connection-Status LED on
+  }else{
+    //Measure Distance to Obstacles in Front and Back
+    car->setSpeedLimit(measureDistance(FRONT),measureDistance(BACK));
+    car->drive();//set new limited driveSpeed
+  }
+}
+
 byte checkSerialProtocol(byte in){
-	if(in == STARTBYTE){
-		return in - 1;
-	}
-	return in;
+  if(in == STARTBYTE){
+    return in - 1;
+  }
+  return in;
 }
 
 void serialProtocolRead(){
@@ -192,9 +165,7 @@ void serialProtocolRead(){
   while(Serial.available()) {
     // get the new byte:
     byte inChar = (byte) Serial.read();
-    if(DEBUG){
-      Serial.println(inChar,HEX);
-    }
+    DEBUG_PRINTLN_HEX(inChar);
     if(inChar == STARTBYTE){
       rxBufferLength = 0;
     }
@@ -218,64 +189,16 @@ void serialProtocolRead(){
       }
       //update values
       receiveTime = millis();// Set timestamp emergency-stop (last received command)
+      byte rxDrive  = rxBuffer[NUM_SPEED];
+      byte rxSteer  = rxBuffer[NUM_STEER];
+      byte rxStatus = rxBuffer[NUM_STATUS];
+      car->update(getDriveDir(rxDrive), getDriveStep(rxDrive), getSteerStep(rxSteer), getFrontLight(rxStatus), getFailsafeStop(rxStatus));
+      setLED(LED3_YELLOW_STATUS,getStatusLed(rxStatus));
+      if(getResetAccumulatedCurrent(rxStatus)){
+        battery->resetAccumulatedCurrent();
+      }
       setLED(LED1_RED_CONNECTION,LOW);
-      rxSpeed  = rxBuffer[NUM_SPEED];
-      rxSteer  = rxBuffer[NUM_STEER];
-      rxStatus = rxBuffer[NUM_STATUS];
-      carUpdate();
     }
-  }
-}
-
-
-/*
-  SerialEvent occurs whenever a new data comes in the
- hardware serial RX.  This routine is run between each
- time loop() runs, so using delay inside loop can delay
- response.  Multiple bytes of data may be available.
- */
-void serialEvent(){
-  serialProtocolRead();
-}
-
-void emergencyCheck(){
-  if (receiveTime + SERIAL_EMERGENCY_TIMEOUT < millis()){  // Stop car after emergency-timeout 
-    carStop();
-    setLED(LED1_RED_CONNECTION,HIGH);//Connection-Status LED on
-  }else{
-    if(getFailsafeStop()){
-      //Measure Distance to Obstacles in Front or Back
-      if(getDriveDir() == FRONT && getDriveStep() > 0 ){
-        byte d = measureDistance(FRONT);
-        //Serial.print("distFront:");Serial.println(d);
-        carLimit(d);//Limit maximum speed to protect car from hard crashes
-      }
-      else 
-      if(getDriveDir() == BACK && getDriveStep() > 0){
-        byte d = measureDistance(BACK);
-        //Serial.print("distBack:");Serial.println(d);
-        carLimit(d); //Limit maximum speed to protect car from hard crashes
-      }
-      else{
-        byte d = min(measureDistance(BACK),measureDistance(FRONT));
-        //Serial.print("distMin:");Serial.println(d);
-        carLimit(d);
-      }
-      carDrive();//set new limited driveSpeed
-    }
-  }
-}
-
-
-void checkPwr(){
-  if(battery->getRelAccCurrent() < POWER_LED_LOW){
-    if(powerLedTime + POWER_LED_INTERVAL < millis()){
-      powerLedState ^=1; //toggle state
-      setLED(LED2_GREEN_POWER,powerLedState);
-    }
-  }
-  else{
-    setLED(LED2_GREEN_POWER,HIGH);
   }
 }
 
@@ -304,6 +227,28 @@ byte serialProtocolCalcChecksum(byte* buffer, byte length, byte dir){
   return check;
 }
 
+/*
+  SerialEvent occurs whenever a new data comes in the
+ hardware serial RX.  This routine is run between each
+ time loop() runs, so using delay inside loop can delay
+ response.  Multiple bytes of data may be available.
+ */
+void serialEvent(){
+  serialProtocolRead();
+}
+
+void checkPwr(){
+  if(battery->getRelAccCurrent() < POWER_LED_LOW){
+    if(powerLedTime + POWER_LED_INTERVAL < millis()){
+      powerLedState ^=1; //toggle state
+      setLED(LED2_GREEN_POWER,powerLedState);
+    }
+  }
+  else{
+    setLED(LED2_GREEN_POWER,HIGH);
+  }
+}
+
 byte measureDistance(byte dir)
 {
   int triggerPin = ULTRASOUND_BACK_TRIGGER;
@@ -326,96 +271,15 @@ byte measureDistance(byte dir)
   
   if (distance == 0 || distance > ULTRASOUND_MAX_VAL){//Nothing in given max. Range
     distance = 255;
-    
   }
-  if(DEBUG){
-    Serial.print("Distance");
+  DEBUG_PRINT("Distance");
   if(dir == FRONT) 
-    Serial.print("Front:");
+    DEBUG_PRINT("Front:");
   else
-    Serial.print("Back :");
-  Serial.println(distance);
-  }
+    DEBUG_PRINT("Back :");
+  DEBUG_PRINTLN(distance);
+  
   return (byte) distance;
-}
-
-
-void carSteer()
-{
-  char step = getSteerStep();
-  if(abs(step) > STEERING_RESOLUTION){
-    step = 0;
-  }
-  int angle = round(STEERING_SERVO_MIDDLE + STEERING_ANGLE_PER_STEP * step);
-  if(angle > STEERING_ANGLE_MAX){
-    angle = STEERING_ANGLE_MAX;
-  }
-  if(angle < STEERING_ANGLE_MIN){
-    angle = STEERING_ANGLE_MIN;
-  }
-  if(DEBUG > 0){
-    Serial.print("angle:");Serial.println(angle);
-  }
-  steeringServo.write(angle);
-}
-
-
-void carDrive(){
-  char step = getDriveStep();
-  byte dir  = getDriveDir();
-  //set step to speedLimit
-  if(DEBUG){
-    Serial.print("inputstep :");Serial.println((int)step);
-    Serial.print("speedLimit:");Serial.println((int)speedLimit);
-  }
-  if(step > speedLimit){
-    step = speedLimit;
-    if(DEBUG > 0){
-      Serial.print("Speed limited to ");Serial.println(step);
-    }
-  }
-  //check step resolution
-  if((step > MOTOR_RESOLUTION) || (step < 1))
-  {
-    carStop();
-    return;
-  }
-  //set speed value
-  int speed = round(MOTOR_START + step * MOTOR_SPEED_PER_STEP);
-  if(DEBUG){
-    Serial.print("speed:");Serial.println(speed);
-  }
-  //set motor pins
-  if(dir == FRONT)
-  {
-    digitalWrite(MOTOR_ENABLE,LOW); //To prevent H-Bridge from short-circuit
-    digitalWrite(MOTOR_23,LOW);
-    digitalWrite(MOTOR_14,HIGH);
-    analogWrite(MOTOR_ENABLE,speed);
-  }
-  else// if(dir == BACK)
-  {
-    digitalWrite(MOTOR_ENABLE,LOW); //To prevent H-Bridge from short-circuit
-    digitalWrite(MOTOR_14,LOW);
-    digitalWrite(MOTOR_23,HIGH);
-    analogWrite(MOTOR_ENABLE,speed);
-  }
-}
-
-void carStop()
-{
-  digitalWrite(MOTOR_14,LOW);
-  digitalWrite(MOTOR_23,LOW);// stopped
-  digitalWrite(MOTOR_ENABLE,LOW);
-}
-
-void setFrontLight(byte enable, byte value){
-  if(enable){
-    analogWrite(FRONT_LIGHT,value);
-  }
-  else{
-    analogWrite(FRONT_LIGHT,0);
-  }
 }
 
 void setLED(byte LEDpin, byte value){
@@ -427,50 +291,27 @@ void setLED(byte LEDpin, byte value){
   }
 }
 
-void carLimit(byte distance){
-  //set to maximal speed
-  speedLimit = MOTOR_RESOLUTION;
-  for(int i = 0;i < LIMIT_STEPS;i++){
-    if (distance < LIMIT_DISTANCE[i]){
-      //decrease distance
-      speedLimit = LIMIT_SPEED[i];
-      break;
-    }
-  }
+boolean getStatusLed(byte b){
+  return bitRead(b,STATUS_LED_BIT) ? true:false;
+}
+boolean getFrontLight(byte b){
+  return bitRead(b,FRONT_LIGHT_BIT) ? true:false;
+}
+boolean getResetAccumulatedCurrent(byte b){
+  return bitRead(b,RESET_ACC_CURRENT_BIT) ? true:false;
+}
+boolean getFailsafeStop(byte b){ //get Failsafe Stop
+  return bitRead(b,FAILSAFE_STOP_BIT) ? true:false;
 }
 
-boolean getStatusLed(){
-  return bitRead(rxStatus,STATUS_LED_BIT) ? true:false;
-}
-boolean getFrontLight(){
-  return bitRead(rxStatus,FRONT_LIGHT_BIT) ? true:false;
-}
-boolean getResetAccumulatedCurrent(){
-  return bitRead(rxStatus,RESET_ACC_CURRENT_BIT) ? true:false;
-}
-boolean getFailsafeStop(){ //get Failsafe Stop
-  return bitRead(rxStatus,FAILSAFE_STOP_BIT) ? true:false;
+byte getDriveDir(byte b){
+  return bitRead(b,SIGN_BIT) ? BACK:FRONT;
 }
 
-byte getDriveDir(){
-  return bitRead(rxSpeed,SIGN_BIT) ? BACK:FRONT;
+char getDriveStep(byte b){
+  return abs((char)b);
 }
 
-byte getSteerDir(){
-  return bitRead(rxSteer,SIGN_BIT) ? LEFT:RIGHT;
-}
-
-char getDriveStep(){
-  return abs((char)rxSpeed);
-}
-
-char getSteerStep(){
-  return (char) rxSteer;
-}
-
-void carUpdate(){
-  setLED(LED3_YELLOW_STATUS,getStatusLed());
-  setFrontLight(getFrontLight(),FRONT_LIGHT_DIMMER);
-  carSteer();
-  carDrive();
+char getSteerStep(byte b){
+  return (char) b;
 }

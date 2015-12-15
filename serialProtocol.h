@@ -40,10 +40,6 @@
 #define SIGN_BIT               7
 #define SIGN_MASK              (1 << SIGN_BIT)
 
-#define SPEED_DEFAULT          0x00
-#define STEER_DEFAULT          0x00
-#define STATUS_DEFAULT         0x20
-
 #define BUFFER_LENGTH_OFFSET   3
 #define SEND_BUFFER_LENGTH     (SEND_LENGTH + BUFFER_LENGTH_OFFSET)
 #define RECEIVE_BUFFER_LENGTH  (RECEIVE_LENGTH + BUFFER_LENGTH_OFFSET)

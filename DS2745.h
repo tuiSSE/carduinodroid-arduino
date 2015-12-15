@@ -6,8 +6,8 @@
  * url      : https://github.com/tuiSSE/carduinodroid-wiki/wiki/
  */
 
-#ifndef DS2745__h
-#define DS2745__h
+#ifndef DS2745__H
+#define DS2745__H
 
 #if defined(ARDUINO) && ARDUINO >= 100
   #include "Arduino.h"
@@ -20,7 +20,7 @@
 class  DS2745{
 	public:
 		DS2745();
-		~DS2745();
+		volatile ~DS2745();
 		
 		byte  getTemperature();
 		byte  getCurrent();

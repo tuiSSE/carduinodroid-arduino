@@ -16,7 +16,7 @@ DS2745::DS2745(){
 	voltage = -1;
 }
 
-DS2745::~DS2745(){
+volatile DS2745::~DS2745(){
 }
 
 byte DS2745::getTemperature(){
