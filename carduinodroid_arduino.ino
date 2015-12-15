@@ -70,8 +70,8 @@ const byte  RX                       =1;
 //define steering servo
 const int   STEERING_SERVO_MIDDLE    =90;
 const int   STEERING_SERVO_RANGE     =40; //measured
-const int   STEERING_RESOLUTION      =8;//127; //resolution of the steering servo
-const int   STEERING_ANGLE_PER_STEP  =STEERING_SERVO_RANGE  / STEERING_RESOLUTION; //angle of one servo step
+const char  STEERING_RESOLUTION      =127;//8; //resolution of the steering servo
+const float STEERING_ANGLE_PER_STEP  =1.0*STEERING_SERVO_RANGE  / STEERING_RESOLUTION; //angle of one servo step
 const int   STEERING_ANGLE_MIN       =STEERING_SERVO_MIDDLE - STEERING_SERVO_RANGE;//minimum angle
 const int   STEERING_ANGLE_MAX       =STEERING_SERVO_MIDDLE + STEERING_SERVO_RANGE;//maximum angle
 
@@ -79,8 +79,8 @@ const int   STEERING_ANGLE_MAX       =STEERING_SERVO_MIDDLE + STEERING_SERVO_RAN
 const int   MOTOR_MAX                =255;
 const int   MOTOR_START              =75;
 const int   MOTOR_RANGE              =MOTOR_MAX - MOTOR_START;
-const int   MOTOR_RESOLUTION         =9;//127;
-const float MOTOR_SPEED_PER_STEP     =MOTOR_RANGE / MOTOR_RESOLUTION;
+const char  MOTOR_RESOLUTION         =127;//9; //resolution of the main motor
+const float MOTOR_SPEED_PER_STEP     =1.0 * MOTOR_RANGE / MOTOR_RESOLUTION;
 
 //define ultrasonic constants
 const int   ULTRASOUND_MAX_RANGE     = 300; // Maximum Range of Ultrasonic Sensors to achive in cm
@@ -91,8 +91,9 @@ const long  ULTRASOUND_TIMEOUT       = 2*1000000*ULTRASOUND_MAX_RANGE/100/ULTRAS
 
 //define limits for speed
 const int   LIMIT_STEPS                =5; //number of limit
-const int   LIMIT_SPEED[LIMIT_STEPS]   ={1 ,2 ,4  ,6  ,8};
-const int   LIMIT_DISTANCE[LIMIT_STEPS]={10,50,100,200,254};
+const char  LIMIT_SPEED[LIMIT_STEPS]   ={6 ,12 ,30  ,50  ,100};
+//const int   LIMIT_SPEED[LIMIT_STEPS]   ={1 ,2 ,4  ,6  ,8};
+const int   LIMIT_DISTANCE[LIMIT_STEPS]={10,50,100,1500,200};
 
 //Define front led dimmer
 const int   FRONT_LIGHT_DIMMER       =1023; //Dimming of Front LEDs
@@ -121,7 +122,7 @@ byte   rxBufferLength                =0;
 byte   rxSpeed                       =SPEED_DEFAULT;
 byte   rxSteer                       =STEER_DEFAULT;
 byte   rxStatus                      =STATUS_DEFAULT;
-int    speedLimit                    =MOTOR_RESOLUTION;
+char   speedLimit                    =MOTOR_RESOLUTION;
 
 Servo  steeringServo;    //Define steeringServo as Variable
 DS2745* battery;
@@ -145,8 +146,8 @@ void setup()
   steeringServo.attach(STEERING_SERVO);
   
   steeringServo.write(STEERING_SERVO_MIDDLE);
+  
   battery = new DS2745();
-
   battery->init();
   
   //initialize Car
@@ -213,9 +214,6 @@ void serialProtocolRead(){
       byte check = serialProtocolCalcChecksum(rxBuffer,NUM_RECEIVE_CHECK,RX);
       if(rxBuffer[NUM_RECEIVE_CHECK] != check){
         rxBufferLength = 0;
-        Serial.print(check,HEX);
-        Serial.print("!=");
-        Serial.print(rxBuffer[NUM_RECEIVE_CHECK],HEX);
         continue;
       }
       //update values
@@ -246,13 +244,22 @@ void emergencyCheck(){
     setLED(LED1_RED_CONNECTION,HIGH);//Connection-Status LED on
   }else{
     if(getFailsafeStop()){
-	//Measure Distance to Obstacles in Front or Back
+      //Measure Distance to Obstacles in Front or Back
       if(getDriveDir() == FRONT && getDriveStep() > 0 ){
-        carLimit(measureDistance(FRONT));//Limit maximum speed to protect car from hard crashes
+        byte d = measureDistance(FRONT);
+        //Serial.print("distFront:");Serial.println(d);
+        carLimit(d);//Limit maximum speed to protect car from hard crashes
       }
       else 
       if(getDriveDir() == BACK && getDriveStep() > 0){
-        carLimit(measureDistance(BACK)); //Limit maximum speed to protect car from hard crashes
+        byte d = measureDistance(BACK);
+        //Serial.print("distBack:");Serial.println(d);
+        carLimit(d); //Limit maximum speed to protect car from hard crashes
+      }
+      else{
+        byte d = min(measureDistance(BACK),measureDistance(FRONT));
+        //Serial.print("distMin:");Serial.println(d);
+        carLimit(d);
       }
       carDrive();//set new limited driveSpeed
     }
@@ -315,16 +322,19 @@ byte measureDistance(byte dir)
   //wait for receiving the signal (max. waittime = ULTRASOUND_TIMEOUT)
   long duration = pulseIn(echoPin, HIGH, ULTRASOUND_TIMEOUT);
   long distance = duration/2/ULTRASOUND_SPEED; // Duration until Signal / 2 / Speed of Sound im microseconds/cm
-  if (distance == 0 || distance > ULTRASOUND_MAX_RANGE){//Nothing in given max. Range
-    distance = -1;
+  
+  
+  if (distance == 0 || distance > ULTRASOUND_MAX_VAL){//Nothing in given max. Range
+    distance = 255;
+    
   }
   if(DEBUG){
     Serial.print("Distance");
-    if(dir == FRONT) 
-      Serial.print("Front:");
-    else
-      Serial.print("Back :");
-    Serial.println(distance);
+  if(dir == FRONT) 
+    Serial.print("Front:");
+  else
+    Serial.print("Back :");
+  Serial.println(distance);
   }
   return (byte) distance;
 }
@@ -332,29 +342,36 @@ byte measureDistance(byte dir)
 
 void carSteer()
 {
-  byte step = getSteerStep();
-  byte dir  = getSteerDir();
-  if(step <= STEERING_RESOLUTION)
-  {
-    if(dir == RIGHT)
-      steeringServo.write(STEERING_SERVO_MIDDLE + step*STEERING_ANGLE_PER_STEP);
-    else
-      steeringServo.write(STEERING_SERVO_MIDDLE - step*STEERING_ANGLE_PER_STEP);  
+  char step = getSteerStep();
+  if(abs(step) > STEERING_RESOLUTION){
+    step = 0;
   }
-  else
-    steeringServo.write(STEERING_SERVO_MIDDLE);
+  int angle = round(STEERING_SERVO_MIDDLE + STEERING_ANGLE_PER_STEP * step);
+  if(angle > STEERING_ANGLE_MAX){
+    angle = STEERING_ANGLE_MAX;
+  }
+  if(angle < STEERING_ANGLE_MIN){
+    angle = STEERING_ANGLE_MIN;
+  }
+  if(DEBUG > 0){
+    Serial.print("angle:");Serial.println(angle);
+  }
+  steeringServo.write(angle);
 }
 
 
 void carDrive(){
-  byte step = getDriveStep();
+  char step = getDriveStep();
   byte dir  = getDriveDir();
   //set step to speedLimit
+  if(DEBUG){
+    Serial.print("inputstep :");Serial.println((int)step);
+    Serial.print("speedLimit:");Serial.println((int)speedLimit);
+  }
   if(step > speedLimit){
     step = speedLimit;
     if(DEBUG > 0){
-      Serial.print("Speed limited to ");
-      Serial.println(step);
+      Serial.print("Speed limited to ");Serial.println(step);
     }
   }
   //check step resolution
@@ -364,7 +381,10 @@ void carDrive(){
     return;
   }
   //set speed value
-  byte speed = MOTOR_START + step * MOTOR_SPEED_PER_STEP;
+  int speed = round(MOTOR_START + step * MOTOR_SPEED_PER_STEP);
+  if(DEBUG){
+    Serial.print("speed:");Serial.println(speed);
+  }
   //set motor pins
   if(dir == FRONT)
   {
@@ -440,12 +460,12 @@ byte getSteerDir(){
   return bitRead(rxSteer,SIGN_BIT) ? LEFT:RIGHT;
 }
 
-byte getDriveStep(){
-  return (rxSpeed & ~SIGN_MASK);
+char getDriveStep(){
+  return abs((char)rxSpeed);
 }
 
-byte getSteerStep(){
-  return (rxSteer & ~SIGN_MASK);
+char getSteerStep(){
+  return (char) rxSteer;
 }
 
 void carUpdate(){
