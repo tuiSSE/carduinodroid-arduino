@@ -177,7 +177,7 @@ void serialProtocolRead(){
       rxBufferLength = 0;
       continue;
     }
-	if(rxBufferLength >= RECEIVE_BUFFER_LENGTH){
+    if(rxBufferLength >= RECEIVE_BUFFER_LENGTH){
       if(rxBuffer[NUM_VERSION_LENGTH] != RECEIVE_VERSION_LENGTH){
         rxBufferLength = 0;
         continue;
