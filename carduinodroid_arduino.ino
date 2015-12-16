@@ -3,7 +3,7 @@
  *
  *  version 2.0
  *  url     https://github.com/tuiSSE/carduinodroid-wiki/wiki/
- *
+ *          https://github.com/tuiSSE/carduinodroid-wiki/wiki/Arduino-Sketch/
  */
  
 
@@ -121,20 +121,20 @@ void loop()
   serialProtocolWrite();  
   emergencyCheck();
   checkPwr();
-}//loop()
+}
 
 void serialProtocolWrite(){
   if(sendTime + SERIAL_SEND_INTERVAL < millis()){
     battery->update();
     txBuffer[NUM_START]           = STARTBYTE;
     txBuffer[NUM_VERSION_LENGTH]  = SEND_VERSION_LENGTH;
-    txBuffer[NUM_CURRENT]         = checkSerialProtocol(battery->getCurrent());
-    txBuffer[NUM_ACC_CURRENT]     = checkSerialProtocol(battery->getAccCurrent());
-    txBuffer[NUM_REL_ACC_CURRENT] = checkSerialProtocol(battery->getRelAccCurrent());
-    txBuffer[NUM_VOLTAGE]         = checkSerialProtocol(battery->getVoltage());
-    txBuffer[NUM_TEMPERATURE]     = checkSerialProtocol(battery->getTemperature());
-    txBuffer[NUM_DISTANCE_FRONT]  = checkSerialProtocol(measureDistance(FRONT));
-    txBuffer[NUM_DISTANCE_BACK]   = checkSerialProtocol(measureDistance(BACK));
+    txBuffer[NUM_CURRENT]         = checkSerialProtocolByte(battery->getCurrent());
+    txBuffer[NUM_ACC_CURRENT]     = checkSerialProtocolByte(battery->getAccCurrent());
+    txBuffer[NUM_REL_ACC_CURRENT] = checkSerialProtocolByte(battery->getRelAccCurrent());
+    txBuffer[NUM_VOLTAGE]         = checkSerialProtocolByte(battery->getVoltage());
+    txBuffer[NUM_TEMPERATURE]     = checkSerialProtocolByte(battery->getTemperature());
+    txBuffer[NUM_DISTANCE_FRONT]  = checkSerialProtocolByte(measureDistance(FRONT));
+    txBuffer[NUM_DISTANCE_BACK]   = checkSerialProtocolByte(measureDistance(BACK));
     txBuffer[NUM_SEND_CHECK]      = serialProtocolCalcChecksum(txBuffer,NUM_SEND_CHECK,TX);
     
     Serial.write(txBuffer, SEND_BUFFER_LENGTH);
@@ -153,7 +153,7 @@ void emergencyCheck(){
   }
 }
 
-byte checkSerialProtocol(byte in){
+byte checkSerialProtocolByte(byte in){
   if(in == STARTBYTE){
     return in - 1;
   }
@@ -195,7 +195,7 @@ void serialProtocolRead(){
       car->update(getDriveDir(rxDrive), getDriveStep(rxDrive), getSteerStep(rxSteer), getFrontLight(rxStatus), getFailsafeStop(rxStatus));
       setLED(LED3_YELLOW_STATUS,getStatusLed(rxStatus));
       if(getResetAccumulatedCurrent(rxStatus)){
-        battery->resetAccumulatedCurrent();
+        battery->resetAccuCurrent();
       }
       setLED(LED1_RED_CONNECTION,LOW);
     }

@@ -44,7 +44,7 @@ void DS2745::init(){
 
   byte chipRegister = getStatusRegister();
   if((chipRegister & DS2745_PWR_ON_RST) != 0){ //If PORF (Power on Reset Flag) bit is 1
-    resetAccumulatedCurrent();
+    resetAccuCurrent();
     setStatusRegister(chipRegister & (~(DS2745_PWR_ON_RST)));
   }
 }
@@ -122,7 +122,7 @@ void DS2745::update(){
 }
 
 
-void DS2745::resetAccumulatedCurrent(){
+void DS2745::resetAccuCurrent(){
   int accCurrStartRegister = DS2745_ACC_CURR_START;
   byte accCurrStartRegisterLsb = lowByte(accCurrStartRegister);
   byte accCurrStartRegisterMsb = highByte(accCurrStartRegister);

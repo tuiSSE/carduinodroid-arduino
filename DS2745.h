@@ -28,7 +28,7 @@ class  DS2745{
 		byte  getRelAccCurrent();
 		byte  getVoltage();
 	
-		void  resetAccumulatedCurrent();
+		void  resetAccuCurrent();
 		void  init();
 		void  update();
 	private:
